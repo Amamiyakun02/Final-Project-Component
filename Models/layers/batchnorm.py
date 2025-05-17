@@ -17,7 +17,8 @@ class BatchNorm2D:
         self.training = True
 
     def forward(self, x):
-        if self.training:
+        self.input = x
+        if len(x.shape) == 4:
             mean = np.mean(x, axis=(0, 2, 3), keepdims=True)
             var = np.var(x, axis=(0, 2, 3), keepdims=True)
 
@@ -31,3 +32,10 @@ class BatchNorm2D:
             out = self.gamma * x_hat + self.beta
 
         return out
+
+    def backward(self, grad_output, learning_rate):
+        N, C, H, W = self.input.shape
+        std_inv = 1. / np.sqrt(self.running_var + self.epsilon)
+
+        dx_norm = grad_output * self.gamma
+        dvar = np.sum(dx_norm * (self.input - self.running_mean))
