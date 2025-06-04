@@ -1,62 +1,58 @@
 # layers/residual_block.py
-import numpy as np
 from Models.layers.conv2d import Conv2D
-from Models.layers.batchnorm import BatchNorm2D
+from Models.layers.batchnorm2d import BatchNorm2D
 from Models.layers.relu import ReLU
 
 class ResidualBlock:
-    def __init__(self, in_channels, out_channels, downsample=False):
-        stride = 2 if downsample else 1
-
-        # Main path
+    def __init__(self, in_channels, out_channels, stride=1):
         self.conv1 = Conv2D(in_channels, out_channels, kernel_size=3, stride=stride, padding=1)
         self.bn1 = BatchNorm2D(out_channels)
-        self.relu1 = ReLU()
+        self.relu = ReLU()
+
         self.conv2 = Conv2D(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
         self.bn2 = BatchNorm2D(out_channels)
 
-        # Shortcut path
-        self.downsample = downsample
-        if downsample or in_channels != out_channels:
-            self.shortcut_conv = Conv2D(in_channels, out_channels, kernel_size=1, stride=stride, padding=0)
+        self.use_projection = (stride != 1 or in_channels != out_channels)
+        if self.use_projection:
+            self.shortcut_conv = Conv2D(in_channels, out_channels, kernel_size=1, stride=stride)
             self.shortcut_bn = BatchNorm2D(out_channels)
-        else:
-            self.shortcut_conv = None
-
-        self.relu_out = ReLU()
 
     def forward(self, x):
-        self.input = x
-
         out = self.conv1.forward(x)
         out = self.bn1.forward(out)
-        out = self.relu1.forward(out)
+        out = self.relu.forward(out)
+
         out = self.conv2.forward(out)
         out = self.bn2.forward(out)
 
-        if self.downsample or self.shortcut_conv:
+        if self.use_projection:
             shortcut = self.shortcut_conv.forward(x)
             shortcut = self.shortcut_bn.forward(shortcut)
         else:
-            shortcut = x
+            shortcut = x  # asumsi ukuran sama
 
-        self.output = self.relu_out.forward(out + shortcut)
-        return self.output
+        out += shortcut
+        out = self.relu.forward(out)
+        return out
 
-    def backward(self, grad_output, learning_rate):
-        grad = self.relu_out.backward(grad_output)
+    def backward(self, grad_output):
+        grad_output = self.relu.backward(grad_output)
 
-        if self.downsample or self.shortcut_conv:
-            grad_shortcut = self.shortcut_bn.backward(grad, learning_rate)
-            grad_shortcut = self.shortcut_conv.backward(grad_shortcut, learning_rate)
-        else:
-            grad_shortcut = grad
+        grad_shortcut = grad_output.copy()
+        grad_main = grad_output.copy()
 
-        grad = self.bn2.backward(grad, learning_rate)
-        grad = self.conv2.backward(grad, learning_rate)
-        grad = self.relu1.backward(grad)
-        grad = self.bn1.backward(grad, learning_rate)
-        grad = self.conv1.backward(grad, learning_rate)
+        # Backward main path
+        grad_main = self.bn2.backward(grad_main)
+        grad_main = self.conv2.backward(grad_main)
+        grad_main = self.relu.backward(grad_main)
+        grad_main = self.bn1.backward(grad_main)
+        grad_main = self.conv1.backward(grad_main)
 
-        grad_input = grad + grad_shortcut
+        # Backward shortcut
+        if self.use_projection:
+            grad_shortcut = self.shortcut_bn.backward(grad_shortcut)
+            grad_shortcut = self.shortcut_conv.backward(grad_shortcut)
+
+        # Combine grads
+        grad_input = grad_main + grad_shortcut
         return grad_input
